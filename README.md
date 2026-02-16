@@ -1,0 +1,105 @@
+# Dimmy the Cube - Wireless Setup Guide
+
+## Quick Start (5 Steps)
+
+### 1. Find Your PC's IP Address
+```bash
+python3 get_my_ip.py
+```
+This will show something like: `192.168.1.100`
+
+### 2. Configure WiFi + PC IP
+Edit `dimmy-the-cube.ino`:
+
+**Lines 11-12** - Your WiFi:
+```cpp
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+```
+
+**Line 19** - Your PC's IP (from step 1):
+```cpp
+IPAddress pcIP(192, 168, 1, 100);  // Use YOUR PC's IP here
+```
+
+### 3. First Upload (USB)
+1. Connect ESP32 via USB
+2. Upload the code
+3. Open Serial Monitor (115200 baud)
+4. Verify WiFi connects and sensors initialize
+
+### 4. Start Wireless Monitor
+In a new terminal, run:
+```bash
+python3 monitor_dimmy.py
+```
+
+You should see:
+```
+🎲 DIMMY THE CUBE - Wireless Monitor
+Listening for data on UDP port 4211...
+
+[14:23:45.123] Floor:3 | Dimmest:2 (1234) | Brightest:5 (8765)
+[14:23:45.173] Floor:3 | Dimmest:2 (1201) | Brightest:5 (8801)
+```
+
+### 5. Go Wireless!
+Unplug USB, power with battery - cube streams data to your PC wirelessly! 🎉
+
+## What Gets Monitored
+
+| Value | Description |
+|-------|-------------|
+| **floorSide** | Which side (0-5) is on the floor (highest proximity) |
+| **dimmestSide** | Which side has the least light |
+| **brightestSide** | Which side has the most light |
+
+Numbers in parentheses show actual light values (0-65535)
+
+## Wireless Code Updates (OTA)
+
+Next time you need to update code:
+1. Arduino IDE → **Tools → Port**
+2. Select network port: `dimmy-cube at 192.168.1.XXX`
+3. Click **Upload** - no cable needed!
+4. Password: `dimmy123` (if prompted)
+
+## Two Ways to Monitor
+
+| Method | When to Use |
+|--------|-------------|
+| **USB Serial Monitor** | Initial testing, debugging, when cube is plugged in |
+| **Wireless (UDP)** | Playtesting with free movement, untethered operation |
+
+Both show the same data - use whichever works for your workflow!
+
+## Playtesting Workflow
+
+```
+1. Power cube with battery pack
+2. Run: python3 monitor_dimmy.py
+3. Walk around testing different lighting conditions
+4. See real-time data on your PC screen
+5. Need code changes? Upload wirelessly via OTA!
+```
+
+## Troubleshooting
+
+**Monitor script shows nothing:**
+- Check PC IP is correct in Arduino code (line 19)
+- Make sure both PC and cube are on same WiFi
+- Try running `python3 get_my_ip.py` again to verify IP
+
+**Can't see network port in Arduino IDE:**
+- Ensure ESP32 and PC are on same WiFi
+- Wait 30 seconds after powering cube
+- Check Serial Monitor for cube's IP address
+
+**OTA upload fails:**
+- Password is `dimmy123`
+- Restart Arduino IDE
+- Power cycle the cube
+
+**Firewall blocking UDP:**
+- Mac: System Preferences → Security & Privacy → Firewall → Allow Python
+- Windows: Allow Python through Windows Firewall

@@ -46,6 +46,39 @@ Listening for data on UDP port 4211...
 ### 5. Go Wireless!
 Unplug USB, power with battery - cube streams data to your PC wirelessly! 🎉
 
+## Pin Outs
+
+### ESP32 Pins
+
+| GPIO | Function |
+|------|----------|
+| 16 | Wire1 SDA → AS5600 encoder (control motor) |
+| 17 | Wire1 SCL → AS5600 encoder (control motor) |
+| 21 | Wire SDA → TCA9548A multiplexer |
+| 22 | Wire SCL → TCA9548A multiplexer |
+| 25 | SimpleFOCmini IN1 (control motor) |
+| 26 | ESC signal (main drive motor) |
+| 27 | SimpleFOCmini EN (control motor) |
+| 32 | SimpleFOCmini IN3 (control motor) |
+| 33 | SimpleFOCmini IN2 (control motor) |
+
+### TCA9548A I2C Multiplexer (0x70)
+
+| Channel | Device |
+|---------|--------|
+| 0 | ❌ Broken/unused |
+| 1 | APDS9960 — side 0 |
+| 2 | APDS9960 — side 1 |
+| 3 | APDS9960 — side 2 |
+| 4 | APDS9960 — side 3 |
+| 5 | APDS9960 — side 4 |
+| 6 | APDS9960 — side 5 |
+
+### Notes
+- AS5600 encoder uses a dedicated I2C bus (Wire1) to avoid contention with the APDS9960 sensors
+- Opposite side pairs: 0↔5, 1↔3, 2↔4
+- Side with highest proximity reading = floor side
+
 ## What Gets Monitored
 
 | Value | Description |

@@ -4,7 +4,7 @@
 #include <ESP32Servo.h>
 
 // ===== Toggle WiFi (uncomment to enable WiFi + OTA + UDP monitoring) =====
-#define WIFI_ENABLED
+// #define WIFI_ENABLED
 
 #ifdef WIFI_ENABLED
 #include <WiFi.h>
@@ -33,16 +33,18 @@ const uint16_t     BRIGHTNESS_THRESHOLD  = 3000;  // maxLight above this trigger
 const uint16_t     DARK_ENOUGH_THRESHOLD = 18;    // avgLight below this = resting state
 const uint8_t      PROX_TOO_CLOSE        = 12;    // proximity above this blocks a side (0-255)
 const unsigned long SPIN_DURATION        = 1000;  // ms main motor spins
-const int ESC_FORWARD = 1925;  // 85% of full forward (2000)
-const int ESC_REVERSE = 1075;  // 85% of full reverse (1000)
+// const int ESC_FORWARD = 1925;  // 85% of full forward (2000)
+// const int ESC_REVERSE = 1075;  // 85% of full reverse (1000)
+const int ESC_FORWARD = 1525;  // 5% of full forward (2000)
+const int ESC_REVERSE = 1475;  // 5% of full reverse (1000)
 const unsigned long POSITION_DURATION    = 500;   // ms to wait for control motor to reach angle
 const unsigned long BRAKE_DURATION       = 1000;  // ms at neutral before returning to sensing
 
 // ===== Motor Constants =====
 const int   CONTROL_POLE_PAIRS          = 7;    // 2804 gimbal motor: 12N14P = 14 poles / 2 = 7 pole pairs
 const float CONTROL_VOLTAGE_SUPPLY      = 12;   // SimpleFOCmini supply voltage
-const float CONTROL_VOLTAGE_LIMIT       = 4;
-const float CONTROL_VOLTAGE_SENSOR_ALIGN = 4;   // voltage used during initFOC alignment
+const float CONTROL_VOLTAGE_LIMIT       = 8;
+const float CONTROL_VOLTAGE_SENSOR_ALIGN = 8;   // voltage used during initFOC alignment
 const float CONTROL_VELOCITY_LIMIT      = 40;   // rad/s
 const float CONTROL_P_ANGLE             = 10;   // outer position loop P gain
 const float CONTROL_PID_P               = 0.2;  // inner velocity loop P gain
@@ -51,17 +53,22 @@ const float CONTROL_PID_D               = 0;
 const float CONTROL_LPF_TF              = 0.05; // velocity low-pass filter
 
 // ===== Pin Definitions =====
-#define CONTROL_IN1  25
+#define CONTROL_IN1  32
 #define CONTROL_IN2  33
-#define CONTROL_IN3  32
-#define CONTROL_EN   27
-#define ESC_PIN      26
-// Wire1 (dedicated I2C bus for AS5600 — avoids contention with APDS sensors on Wire)
-#define ENCODER_SDA  16
-#define ENCODER_SCL  17
+#define CONTROL_IN3  25
+#define CONTROL_EN   26
+#define ESC_PIN      27
+// Wire uses GPIO 16/17 for TCA9548A + APDS sensors
+#define SENSOR_SDA   16
+#define SENSOR_SCL   17
+// Wire1 uses GPIO 21/22 for AS5600 encoder (dedicated bus, no contention)
+#define ENCODER_SDA  21
+#define ENCODER_SCL  22
 
 // ===== Hardware Config =====
 #define TCAADDR 0x70
+// Physical mux channels for sensors 0-5 (channel 4 skipped — not wired)
+const uint8_t SENSOR_CHANNELS[6] = {1, 3, 4, 5, 6, 7};
 
 Adafruit_APDS9960 apds[6];
 bool apdsActive[6] = {false};
@@ -191,6 +198,9 @@ void triggerMove(int floorSide, int targetSide, uint16_t lightLevels[]) {
   pendingMove = getDirectMoveCommand(floorSide, resolvedTarget);
   controlTargetAngle = pendingMove.controlAngle;
 
+  // Wake control motor and snap it to target angle
+  controlMotor.enable();
+
   char msg[128];
   snprintf(msg, sizeof(msg),
            "[MOVE] Floor:%d -> Target:%d | ControlAngle:%.0f deg | ESC:%dus",
@@ -230,7 +240,8 @@ void tickStateMachine() {
 
     case BRAKING:
       if (elapsed >= BRAKE_DURATION) {
-        sendMessage("[STATE] Back to sensing");
+        controlMotor.disable();  // release holding torque to save battery
+        sendMessage("[STATE] Back to sensing (control motor disabled)");
         cubeState = SENSING;
       }
       break;
@@ -252,11 +263,11 @@ void setup() {
   delay(3000);
   Serial.println("ESC Armed!");
 
-  // Wire: TCA + APDS sensors (channels 0-5)
-  Wire.begin();
+  // Wire: TCA + APDS sensors on GPIO 16/17
+  Wire.begin(SENSOR_SDA, SENSOR_SCL);
   Wire.setClock(400000);
 
-  // Wire1: AS5600 encoder only — dedicated bus, no TCA, no contention
+  // Wire1: AS5600 encoder only on GPIO 21/22 — dedicated bus, no contention
   Wire1.begin(ENCODER_SDA, ENCODER_SCL);
   Wire1.setClock(400000);
 
@@ -277,10 +288,14 @@ void setup() {
   controlMotor.PID_velocity.D         = CONTROL_PID_D;
   controlMotor.PID_velocity.output_ramp = 0;
   controlMotor.LPF_velocity.Tf        = CONTROL_LPF_TF;
+  controlMotor.useMonitoring(Serial);  // enables SimpleFOC debug output
   controlMotor.init();
 
-  controlMotor.initFOC();
-  Serial.println("Control motor ready");
+  int focResult = controlMotor.initFOC();
+  Serial.printf("initFOC() returned: %d (1=success, 0=failure)\n", focResult);
+  Serial.printf("Motor status: %d\n", controlMotor.motor_status);
+  controlMotor.disable();  // start idle to save power — enabled on demand during flips
+  Serial.println("Control motor ready (disabled for idle power savings)");
 
 #ifdef WIFI_ENABLED
   Serial.println("\nConnecting to WiFi...");
@@ -312,7 +327,7 @@ void setup() {
 #endif
 
   for (int i = 0; i < 6; i++) {
-    tcaSelect(i + 1);  // channels 1-6 (channel 0 broken)
+    tcaSelect(SENSOR_CHANNELS[i]);  // channels 1,2,3,5,6,7 (skipping 0 and 4)
     if (apds[i].begin()) {
       apds[i].enableProximity(true);
       apds[i].enableColor(true);
@@ -348,7 +363,7 @@ void readSensors() {
 
   for (int i = 0; i < 6; i++) {
     if (!apdsActive[i]) continue;
-    tcaSelect(i + 1);  // channels 1-6
+    tcaSelect(SENSOR_CHANNELS[i]);  // channels 1,2,3,5,6,7 (skipping 0 and 4)
     proxLevels[i] = apds[i].readProximity();
     if (proxLevels[i] > maxProx) { maxProx = proxLevels[i]; floorSide = i; }
   }
@@ -357,7 +372,7 @@ void readSensors() {
 
   for (int i = 0; i < 6; i++) {
     if (!apdsActive[i] || i == floorSide) continue;
-    tcaSelect(i + 1);  // channels 1-6
+    tcaSelect(SENSOR_CHANNELS[i]);  // channels 1,2,3,5,6,7 (skipping 0 and 4)
     uint16_t r, g, b, c;
     if (apds[i].colorDataReady()) {
       apds[i].getColorData(&r, &g, &b, &c);
@@ -381,76 +396,108 @@ void readSensors() {
   darkEnough = (avgLight < DARK_ENOUGH_THRESHOLD);
 }
 
+// ===== Serial Motor Control =====
+// Commands (send via Serial Monitor):
+//   c<degrees>   — set control motor angle (closed-loop), e.g. c90, c0, c45
+//   e<microsecs> — set ESC microseconds, e.g. e1925 (forward), e1075 (reverse), e1500 (stop)
+//   o<rad/s>     — open-loop velocity test (no encoder). e.g. o5, o-5, o0 to stop
+//   n            — enable control motor (power ON, holds position)
+//   f            — disable control motor (power OFF, rotor free-spins, saves battery)
+
+bool openLoopMode = false;
+float openLoopVelocity = 0;
+
+void handleSerialInput() {
+  static String input = "";
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      input.trim();
+      if (input.length() < 1) { input = ""; return; }
+    } else {
+      input += c;
+      return;
+    }
+  }
+  if (input.length() < 1) return;
+
+  char cmd = input.charAt(0);
+  float val = input.substring(1).toFloat();
+
+  if (cmd == 'c') {
+    openLoopMode = false;
+    controlMotor.controller = MotionControlType::angle;
+    if (!controlMotor.enabled) {
+      controlMotor.enable();
+      Serial.println("[CONTROL] Motor re-enabled");
+    }
+    controlTargetAngle = val * PI / 180.0;
+    Serial.printf("[CONTROL] Target angle: %.1f deg (%.3f rad)\n", val, controlTargetAngle);
+  } else if (cmd == 'e') {
+    int micros = (int)val;
+    esc.writeMicroseconds(micros);
+    Serial.printf("[ESC] Set to %d microseconds\n", micros);
+  } else if (cmd == 'o') {
+    if (!openLoopMode) {
+      controlMotor.controller = MotionControlType::velocity_openloop;
+      controlMotor.voltage_limit = 6;
+      controlDriver.enable();          // enable driver directly
+      controlMotor.enable();
+      controlMotor.enabled = 1;        // force flag just in case
+      openLoopMode = true;
+      Serial.printf("[OPEN-LOOP] motor.enabled=%d driver init ok\n", controlMotor.enabled);
+    }
+    openLoopVelocity = val;
+    Serial.printf("[OPEN-LOOP] Velocity: %.2f rad/s (no encoder)\n", openLoopVelocity);
+  } else if (cmd == 'x') {
+    // Raw driver test: spin motor manually using setPhaseVoltage, bypasses all FOC state
+    controlDriver.enable();
+    controlMotor.enabled = 1;
+    Serial.printf("[RAW] Spinning motor at Uq=%.1fV for 3s\n", val);
+    float Uq = val;  // e.g. x4 = 4V
+    unsigned long start = millis();
+    float el_angle = 0;
+    while (millis() - start < 3000) {
+      el_angle += 0.02;
+      if (el_angle > 2*PI) el_angle -= 2*PI;
+      controlMotor.setPhaseVoltage(Uq, 0, el_angle);
+      delayMicroseconds(500);
+    }
+    controlMotor.setPhaseVoltage(0, 0, 0);
+    Serial.println("[RAW] Done");
+  } else if (cmd == 'n') {
+    controlMotor.enable();
+    Serial.println("[CONTROL] Motor ENABLED (holding torque ON)");
+  } else if (cmd == 'f') {
+    controlMotor.disable();
+    Serial.println("[CONTROL] Motor DISABLED (free-spinning, no torque)");
+  } else {
+    Serial.println("Unknown command. Use c<deg>, e<us>, o<rad/s>, n, or f");
+  }
+  input = "";
+}
+
 void loop() {
-  // FOC runs every iteration — same as test-control-motor
   controlMotor.loopFOC();
-  controlMotor.move(controlTargetAngle);
+  if (openLoopMode) {
+    controlMotor.move(openLoopVelocity);
+  } else {
+    controlMotor.move(controlTargetAngle);
+  }
 
 #ifdef WIFI_ENABLED
   ArduinoOTA.handle();
 #endif
-  tickStateMachine();
 
-  // Sensor reads gated to keep FOC loop fast
-  static unsigned long lastSensorTime = 0;
-  if (millis() - lastSensorTime < SENSOR_INTERVAL) return;
-  lastSensorTime = millis();
-  readSensors();
+  handleSerialInput();
 
-  static unsigned long lastPrintTime    = 0;
-  static unsigned long lastFreakoutTime = 0;
-  static unsigned long lastDataTime     = 0;
-
-  if (millis() - lastDataTime >= DATA_INTERVAL) {
-    char dataMsg[128];
-    snprintf(dataMsg, sizeof(dataMsg),
-             "[DATA] Floor:%d | Dimmest:%d (%u) | Brightest:%d (%u) | Avg:%u %s",
-             floorSide, dimmestSide,
-             dimmestSide != -1 ? lightLevels[dimmestSide] : 0,
-             brightestSide, maxLight,
-             avgLight, darkEnough ? "(DARK ENOUGH)" : "");
-    sendMessage(dataMsg);
-
-    char lightMsg[128];
-    int lo = snprintf(lightMsg, sizeof(lightMsg), "[LIGHT]");
-    for (int i = 0; i < 6; i++) {
-      if      (i == floorSide) lo += snprintf(lightMsg + lo, sizeof(lightMsg) - lo, " S%d:FLOOR", i);
-      else if (i == topSide)   lo += snprintf(lightMsg + lo, sizeof(lightMsg) - lo, " S%d:TOP:%u", i, lightLevels[i]);
-      else                     lo += snprintf(lightMsg + lo, sizeof(lightMsg) - lo, " S%d:%u%s", i, lightLevels[i], i == dimmestSide ? "(DIMMEST)" : "");
-    }
-    sendMessage(lightMsg);
-
-    char proxMsg[128];
-    int po = snprintf(proxMsg, sizeof(proxMsg), "[PROX]");
-    for (int i = 0; i < 6; i++) {
-      if (i == floorSide || i == topSide) continue;
-      po += snprintf(proxMsg + po, sizeof(proxMsg) - po,
-                     " S%d:%u%s", i, proxLevels[i],
-                     proxLevels[i] >= PROX_TOO_CLOSE ? "(BLOCKED)" : "");
-    }
-    sendMessage(proxMsg);
-
-    lastDataTime = millis();
-  }
-
-  if (cubeState != SENSING) return;
-
-  bool shouldFreakout = (maxLight > BRIGHTNESS_THRESHOLD) &&
-                        (millis() - lastFreakoutTime >= FREAKOUT_COOLDOWN);
-
-  if (shouldFreakout) {
-    sendFreakoutMessage(brightestSide, floorSide, dimmestSide);
-    if (dimmestSide != -1) triggerMove(floorSide, dimmestSide, lightLevels);
-    lastFreakoutTime = millis();
-    lastPrintTime    = millis();
-  }
-  else if (millis() - lastPrintTime >= PRINT_INTERVAL) {
-    if (darkEnough) {
-      sendRestingMessage();
-    } else if (dimmestSide != -1) {
-      sendNormalMessage(floorSide, dimmestSide);
-      triggerMove(floorSide, dimmestSide, lightLevels);
-    }
-    lastPrintTime = millis();
+  // Print encoder angle every 500ms
+  static unsigned long lastEncoderPrint = 0;
+  if (millis() - lastEncoderPrint >= 500) {
+    lastEncoderPrint = millis();
+    Serial.printf("[ENCODER raw] %.2f rad | [FOC shaft] %.2f rad | [FOC target] %.2f rad\n",
+                  encoder.getAngle(),
+                  controlMotor.shaft_angle,
+                  controlTargetAngle);
   }
 }

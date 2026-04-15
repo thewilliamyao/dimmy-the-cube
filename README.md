@@ -52,32 +52,58 @@ Unplug USB, power with battery - cube streams data to your PC wirelessly! 🎉
 
 | GPIO | Function |
 |------|----------|
-| 16 | Wire1 SDA → AS5600 encoder (control motor) |
-| 17 | Wire1 SCL → AS5600 encoder (control motor) |
-| 21 | Wire SDA → TCA9548A multiplexer |
-| 22 | Wire SCL → TCA9548A multiplexer |
-| 25 | SimpleFOCmini IN1 (control motor) |
-| 26 | ESC signal (main drive motor) |
-| 27 | SimpleFOCmini EN (control motor) |
-| 32 | SimpleFOCmini IN3 (control motor) |
+| 16 | Wire SDA → PCA9548 multiplexer + APDS9960 sensors |
+| 17 | Wire SCL → PCA9548 multiplexer + APDS9960 sensors |
+| 21 | Wire1 SDA → AS5600 encoder (control motor) |
+| 22 | Wire1 SCL → AS5600 encoder (control motor) |
+| 25 | SimpleFOCmini IN3 (control motor) |
+| 26 | SimpleFOCmini EN (control motor) |
+| 27 | ESC signal (main drive motor) |
+| 32 | SimpleFOCmini IN1 (control motor) |
 | 33 | SimpleFOCmini IN2 (control motor) |
 
 ### TCA9548A I2C Multiplexer (0x70)
 
 | Channel | Device |
 |---------|--------|
-| 0 | ❌ Broken/unused |
+| 0 | ❌ Unused |
 | 1 | APDS9960 — side 0 |
 | 2 | APDS9960 — side 1 |
 | 3 | APDS9960 — side 2 |
-| 4 | APDS9960 — side 3 |
-| 5 | APDS9960 — side 4 |
-| 6 | APDS9960 — side 5 |
+| 4 | ❌ Unused (not wired) |
+| 5 | APDS9960 — side 3 |
+| 6 | APDS9960 — side 4 |
+| 7 | APDS9960 — side 5 |
 
 ### Notes
 - AS5600 encoder uses a dedicated I2C bus (Wire1) to avoid contention with the APDS9960 sensors
+- AS5600 VCC must go to **3.3V**, not VIN — 5V will put it in a broken state where it returns 0xFFF
 - Opposite side pairs: 0↔5, 1↔3, 2↔4
 - Side with highest proximity reading = floor side
+
+## Serial Motor Test Commands
+
+When `#define WIFI_ENABLED` is commented out, you can control the motors directly
+from the Serial Monitor (115200 baud) for testing:
+
+| Command | Effect |
+|---------|--------|
+| `c<deg>` | Set control motor angle (closed-loop), e.g. `c0`, `c90`, `c45`. Auto-enables motor. |
+| `e<us>` | Set ESC microseconds, e.g. `e1500` (neutral), `e1925` (forward), `e1075` (reverse) |
+| `o<rad/s>` | Open-loop velocity test (no encoder), e.g. `o5`, `o-5`, `o0` |
+| `x<V>` | Raw driver test — directly spins motor at given voltage for 3s, e.g. `x4`, `x8` |
+| `n` | Enable control motor (holding torque ON) |
+| `f` | Disable control motor (free-spinning, saves battery) |
+
+## Power Savings Strategy
+
+The gimbal motor holding torque is the biggest idle power draw (~300–400mA at 8V).
+To preserve battery during the show:
+
+- Control motor is `disable()`d at boot and during the `SENSING` state
+- `triggerMove()` re-enables it just before positioning
+- `BRAKING → SENSING` transition disables it again
+- Keep `#define WIFI_ENABLED` commented out during the show (saves ~80–150mA)
 
 ## What Gets Monitored
 

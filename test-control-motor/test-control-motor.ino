@@ -2,18 +2,18 @@
 #include <SimpleFOC.h>
 
 // ===== Pins =====
-#define CONTROL_IN1  25
+#define CONTROL_IN1  32  // swapped with IN3 in case soldered backwards
 #define CONTROL_IN2  33
-#define CONTROL_IN3  32
+#define CONTROL_IN3  25
 #define CONTROL_EN   27
-#define ENCODER_SDA  16
-#define ENCODER_SCL  17
+#define ENCODER_SDA  21
+#define ENCODER_SCL  22
 
 // ===== Motor constants =====
 const int   POLE_PAIRS          = 7;
 const float VOLTAGE_SUPPLY      = 12;
 const float VOLTAGE_LIMIT       = 4;    // matched to working example
-const float VOLTAGE_SENSOR_ALIGN = 4;  // voltage used during initFOC alignment
+const float VOLTAGE_SENSOR_ALIGN = 4;   // voltage used during initFOC alignment
 const float VELOCITY_LIMIT      = 40;  // rad/s — was 5, too restrictive
 const float P_ANGLE             = 10;   // outer position loop — lower = less aggressive at rest
 const float PID_P               = 0.2;  // inner velocity loop P
@@ -37,7 +37,7 @@ void setup() {
   Wire1.beginTransmission(0x36);
   byte error = Wire1.endTransmission();
   if (error == 0) {
-    Serial.println("[AS5600] Found at 0x36 on Wire1 (GPIO16/17) ✓");
+    Serial.println("[AS5600] Found at 0x36 on Wire1 (GPIO21/22) ✓");
   } else {
     Serial.printf("[AS5600] NOT found on Wire1 (error %d) — check wiring!\n", error);
   }

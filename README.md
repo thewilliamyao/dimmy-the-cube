@@ -52,32 +52,34 @@ Unplug USB, power with battery - cube streams data to your PC wirelessly! 🎉
 
 | GPIO | Function |
 |------|----------|
+| 13 | ESC signal (main drive motor) |
 | 16 | Wire SDA → PCA9548 multiplexer + APDS9960 sensors |
 | 17 | Wire SCL → PCA9548 multiplexer + APDS9960 sensors |
 | 21 | Wire1 SDA → AS5600 encoder (control motor) |
 | 22 | Wire1 SCL → AS5600 encoder (control motor) |
-| 25 | SimpleFOCmini IN3 (control motor) |
-| 26 | SimpleFOCmini EN (control motor) |
-| 27 | ESC signal (main drive motor) |
-| 32 | SimpleFOCmini IN1 (control motor) |
+| 25 | SimpleFOCmini IN1 (control motor) |
+| 27 | SimpleFOCmini EN (control motor) |
+| 32 | SimpleFOCmini IN3 (control motor) |
 | 33 | SimpleFOCmini IN2 (control motor) |
 
-### TCA9548A I2C Multiplexer (0x70)
+### PCA9548 I2C Multiplexer (0x70)
 
 | Channel | Device |
 |---------|--------|
-| 0 | ❌ Unused |
+| 0 | ❌ Unused (channel broken on board) |
 | 1 | APDS9960 — side 0 |
-| 2 | APDS9960 — side 1 |
-| 3 | APDS9960 — side 2 |
-| 4 | ❌ Unused (not wired) |
+| 2 | ❌ Unused |
+| 3 | APDS9960 — side 1 |
+| 4 | APDS9960 — side 2 |
 | 5 | APDS9960 — side 3 |
 | 6 | APDS9960 — side 4 |
 | 7 | APDS9960 — side 5 |
 
 ### Notes
+- **Power**: SimpleFOCmini needs ~12V from a healthy 3S LiPo to drive the gimbal motor with enough torque. Below ~9V (over-discharged 3S), FOC alignment will fail.
 - AS5600 encoder uses a dedicated I2C bus (Wire1) to avoid contention with the APDS9960 sensors
 - AS5600 VCC must go to **3.3V**, not VIN — 5V will put it in a broken state where it returns 0xFFF
+- Both I2C buses run at 100 kHz (dropped from 400 kHz) to be more tolerant of motor commutation noise
 - Opposite side pairs: 0↔5, 1↔3, 2↔4
 - Side with highest proximity reading = floor side
 
@@ -89,11 +91,13 @@ from the Serial Monitor (115200 baud) for testing:
 | Command | Effect |
 |---------|--------|
 | `c<deg>` | Set control motor angle (closed-loop), e.g. `c0`, `c90`, `c45`. Auto-enables motor. |
-| `e<us>` | Set ESC microseconds, e.g. `e1500` (neutral), `e1925` (forward), `e1075` (reverse) |
+| `e<us>` | Set ESC microseconds, e.g. `e1500` (neutral), `e1600` (forward), `e1400` (reverse). Auto-re-attaches and re-arms ESC if it was released. |
 | `o<rad/s>` | Open-loop velocity test (no encoder), e.g. `o5`, `o-5`, `o0` |
 | `x<V>` | Raw driver test — directly spins motor at given voltage for 3s, e.g. `x4`, `x8` |
 | `n` | Enable control motor (holding torque ON) |
 | `f` | Disable control motor (free-spinning, saves battery) |
+| `r` | Release ESC — detaches PWM and pulls pin LOW so brushless motor coasts. Re-arms automatically on next `e<us>` command. |
+| `s` | Toggle sensor reads + prints on/off (quiet mode for motor testing) |
 
 ## Power Savings Strategy
 

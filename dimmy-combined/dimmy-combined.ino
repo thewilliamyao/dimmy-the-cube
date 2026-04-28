@@ -403,9 +403,13 @@ void readSensors() {
 //   o<rad/s>     — open-loop velocity test (no encoder). e.g. o5, o-5, o0 to stop
 //   n            — enable control motor (power ON, holds position)
 //   f            — disable control motor (power OFF, rotor free-spins, saves battery)
+//   r            — release ESC (no PWM signal, brushless motor coasts, saves power)
+//                  Sending any e<us> command after will re-attach the ESC automatically
+//   s            — toggle sensor printing on/off (also pauses sensor reads)
 
 bool openLoopMode = false;
 float openLoopVelocity = 0;
+bool sensorPrintEnabled = true;
 
 void handleSerialInput() {
   static String input = "";
@@ -435,8 +439,24 @@ void handleSerialInput() {
     Serial.printf("[CONTROL] Target angle: %.1f deg (%.3f rad)\n", val, controlTargetAngle);
   } else if (cmd == 'e') {
     int micros = (int)val;
+    if (!esc.attached()) {
+      esc.attach(ESC_PIN, 1000, 2000);
+      esc.writeMicroseconds(1500);  // arm with neutral first
+      delay(500);                   // give ESC time to register neutral
+      Serial.println("[ESC] Re-attached and armed");
+    }
     esc.writeMicroseconds(micros);
     Serial.printf("[ESC] Set to %d microseconds\n", micros);
+  } else if (cmd == 'r') {
+    esc.writeMicroseconds(1500);  // bring to neutral first
+    delay(20);
+    esc.detach();
+    pinMode(ESC_PIN, OUTPUT);
+    digitalWrite(ESC_PIN, LOW);   // force pin low so ESC sees no pulses
+    Serial.println("[ESC] RELEASED (pin pulled LOW — motor coasts)");
+  } else if (cmd == 's') {
+    sensorPrintEnabled = !sensorPrintEnabled;
+    Serial.printf("[SENSORS] Printing %s\n", sensorPrintEnabled ? "ENABLED" : "DISABLED");
   } else if (cmd == 'o') {
     if (!openLoopMode) {
       controlMotor.controller = MotionControlType::velocity_openloop;
@@ -503,7 +523,7 @@ void loop() {
 
   // Read + print sensors every DATA_INTERVAL (1s)
   static unsigned long lastSensorTime = 0;
-  if (millis() - lastSensorTime >= DATA_INTERVAL) {
+  if (sensorPrintEnabled && millis() - lastSensorTime >= DATA_INTERVAL) {
     lastSensorTime = millis();
     readSensors();
 

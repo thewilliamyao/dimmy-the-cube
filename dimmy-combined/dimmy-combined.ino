@@ -43,8 +43,8 @@ const unsigned long BRAKE_DURATION       = 1000;  // ms at neutral before return
 // ===== Motor Constants =====
 const int   CONTROL_POLE_PAIRS          = 7;    // 2804 gimbal motor: 12N14P = 14 poles / 2 = 7 pole pairs
 const float CONTROL_VOLTAGE_SUPPLY      = 12;   // SimpleFOCmini supply voltage
-const float CONTROL_VOLTAGE_LIMIT       = 8;
-const float CONTROL_VOLTAGE_SENSOR_ALIGN = 8;   // voltage used during initFOC alignment
+const float CONTROL_VOLTAGE_LIMIT       = 8;   // dropped to 3V to prevent overheating
+const float CONTROL_VOLTAGE_SENSOR_ALIGN = 8;  // voltage used during initFOC alignment
 const float CONTROL_VELOCITY_LIMIT      = 40;   // rad/s
 const float CONTROL_P_ANGLE             = 10;   // outer position loop P gain
 const float CONTROL_PID_P               = 0.2;  // inner velocity loop P gain
@@ -53,11 +53,11 @@ const float CONTROL_PID_D               = 0;
 const float CONTROL_LPF_TF              = 0.05; // velocity low-pass filter
 
 // ===== Pin Definitions =====
-#define CONTROL_IN1  32
+#define CONTROL_IN1  25  // matches working test-control-motor config after rewire
 #define CONTROL_IN2  33
-#define CONTROL_IN3  25
-#define CONTROL_EN   26
-#define ESC_PIN      27
+#define CONTROL_IN3  32
+#define CONTROL_EN   27
+#define ESC_PIN      13
 // Wire uses GPIO 16/17 for TCA9548A + APDS sensors
 #define SENSOR_SDA   16
 #define SENSOR_SCL   17
@@ -265,11 +265,11 @@ void setup() {
 
   // Wire: TCA + APDS sensors on GPIO 16/17
   Wire.begin(SENSOR_SDA, SENSOR_SCL);
-  Wire.setClock(400000);
+  Wire.setClock(100000);  // dropped from 400k — more noise-tolerant
 
   // Wire1: AS5600 encoder only on GPIO 21/22 — dedicated bus, no contention
   Wire1.begin(ENCODER_SDA, ENCODER_SCL);
-  Wire1.setClock(400000);
+  Wire1.setClock(100000);  // dropped from 400k — more noise-tolerant against motor commutation
 
   // Control motor (SimpleFOC, AS5600 on Wire1)
   encoder.init(&Wire1);
@@ -491,13 +491,37 @@ void loop() {
 
   handleSerialInput();
 
-  // Print encoder angle every 500ms
+  // Print encoder/FOC state every 500ms — only when motor is enabled
   static unsigned long lastEncoderPrint = 0;
-  if (millis() - lastEncoderPrint >= 500) {
+  if (controlMotor.enabled && millis() - lastEncoderPrint >= 500) {
     lastEncoderPrint = millis();
     Serial.printf("[ENCODER raw] %.2f rad | [FOC shaft] %.2f rad | [FOC target] %.2f rad\n",
                   encoder.getAngle(),
                   controlMotor.shaft_angle,
                   controlTargetAngle);
+  }
+
+  // Read + print sensors every DATA_INTERVAL (1s)
+  static unsigned long lastSensorTime = 0;
+  if (millis() - lastSensorTime >= DATA_INTERVAL) {
+    lastSensorTime = millis();
+    readSensors();
+
+    char proxMsg[128];
+    int po = snprintf(proxMsg, sizeof(proxMsg), "[PROX]");
+    for (int i = 0; i < 6; i++)
+      po += snprintf(proxMsg + po, sizeof(proxMsg) - po, " ch%d:%u", SENSOR_CHANNELS[i], proxLevels[i]);
+    Serial.println(proxMsg);
+
+    char lightMsg[128];
+    int lo = snprintf(lightMsg, sizeof(lightMsg), "[LIGHT]");
+    for (int i = 0; i < 6; i++)
+      lo += snprintf(lightMsg + lo, sizeof(lightMsg) - lo, " ch%d:%u", SENSOR_CHANNELS[i], lightLevels[i]);
+    Serial.println(lightMsg);
+
+    Serial.printf("[SUMMARY] Floor:ch%d | Brightest:ch%d (%u) | Dimmest:ch%d\n",
+                  floorSide  >= 0 ? SENSOR_CHANNELS[floorSide]      : -1,
+                  brightestSide >= 0 ? SENSOR_CHANNELS[brightestSide] : -1, maxLight,
+                  dimmestSide >= 0 ? SENSOR_CHANNELS[dimmestSide]   : -1);
   }
 }

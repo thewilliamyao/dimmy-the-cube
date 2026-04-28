@@ -2,18 +2,19 @@
 #include <SimpleFOC.h>
 
 // ===== Pins =====
-#define CONTROL_IN1  32  // swapped with IN3 in case soldered backwards
+// Phase pin search: try every ordering until open-loop spins smoothly
+#define CONTROL_IN1  25  // trying IN1↔IN3 (with original IN2=33)
 #define CONTROL_IN2  33
-#define CONTROL_IN3  25
+#define CONTROL_IN3  32
 #define CONTROL_EN   27
 #define ENCODER_SDA  21
 #define ENCODER_SCL  22
 
 // ===== Motor constants =====
-const int   POLE_PAIRS          = 7;
+const int   POLE_PAIRS          = 7;   // PP-check confirmed 7.00 (10.78 reading earlier was noise)
 const float VOLTAGE_SUPPLY      = 12;
-const float VOLTAGE_LIMIT       = 4;    // matched to working example
-const float VOLTAGE_SENSOR_ALIGN = 4;   // voltage used during initFOC alignment
+const float VOLTAGE_LIMIT       = 3;    // dropped to 3V to prevent overheating
+const float VOLTAGE_SENSOR_ALIGN = 3;
 const float VELOCITY_LIMIT      = 40;  // rad/s — was 5, too restrictive
 const float P_ANGLE             = 10;   // outer position loop — lower = less aggressive at rest
 const float PID_P               = 0.2;  // inner velocity loop P
@@ -70,6 +71,22 @@ void setup() {
   motor.init();
   Serial.println("[MOTOR] Initialized");
 
+  // ===== Pre-test: open-loop spin to verify phase wiring =====
+  Serial.println("[OPEN-LOOP] Spinning motor for 3s — should rotate SMOOTHLY in one direction");
+  Serial.println("            If it stutters/twitches, phase wires are mis-ordered");
+  motor.controller = MotionControlType::velocity_openloop;
+  motor.enable();
+  unsigned long olStart = millis();
+  while (millis() - olStart < 3000) {
+    motor.move(5);  // 5 rad/s
+    delayMicroseconds(500);
+  }
+  motor.move(0);
+  Serial.println("[OPEN-LOOP] Done\n");
+
+  // Reset to closed-loop angle mode for initFOC
+  motor.controller = MotionControlType::angle;
+
   // ===== Step 4: initFOC (encoder alignment) =====
   Serial.println("[MOTOR] Running initFOC — motor should twitch/move briefly...");
   motor.initFOC();
@@ -93,14 +110,16 @@ void loop() {
   motor.loopFOC();
   motor.move(targetAngle);
 
-  // Print encoder angle every 500ms
+  // Print encoder + FOC state every 200ms
   static unsigned long lastPrint = 0;
-  if (millis() - lastPrint >= 500) {
-    float angle = encoder.getAngle();
-    float error = abs(angle - targetAngle);
-    Serial.printf("[ENCODER] Angle: %.2f rad (%.1f deg) | Target: %.0f deg | Error: %.2f rad\n",
-                  angle, angle * 180.0 / PI,
-                  targetAngle * 180.0 / PI, error);
+  if (millis() - lastPrint >= 200) {
+    Serial.printf("[STATE] enc:%.2f shaft:%.2f vel:%.2f Uq:%.2f target:%.2f enabled:%d\n",
+                  encoder.getAngle(),
+                  motor.shaft_angle,
+                  motor.shaft_velocity,
+                  motor.voltage.q,
+                  targetAngle,
+                  motor.enabled);
     lastPrint = millis();
   }
 }
